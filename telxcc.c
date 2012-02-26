@@ -44,10 +44,10 @@ Further Documentation:
 		http://en.wikipedia.org/wiki/MPEG_transport_stream
 		http://en.wikipedia.org/wiki/Packetized_elementary_stream
 		http://en.wikipedia.org/wiki/Elementary_stream
-	
+
 	ETSI 300 706 (Enhanced Teletext Specification):
 		http://www.etsi.org/deliver/etsi_i_ets/300700_300799/300706/01_60/ets_300706e01p.pdf
-	
+
 	ISO/IEC 6937:2001 (Information technology — Coded graphic character set for text communication — Latin alphabet):
 		http://webstore.iec.ch/preview/info_isoiec6937%7Bed3.0%7Den.pdf
 */
@@ -71,7 +71,7 @@ typedef struct {
 typedef struct {
 	uint64_t show_timestamp; // show at timestamp (in ms)
 	uint64_t hide_timestamp; // hide at timestamp (in ms)
-	uint16_t text[25][40]; // 25 lines x 40 cols (1 screen/page) of wide chars 
+	uint16_t text[25][40]; // 25 lines x 40 cols (1 screen/page) of wide chars
 	uint8_t tainted; // 1 = text variable contains any data
 } teletext_page_t;
 
@@ -96,7 +96,7 @@ uint32_t config_skip = 0;
 // SRT frames produced
 uint32_t frames_produced = 0;
 
-uint8_t detected_subtitles[255] = { 0 };
+uint8_t detected_subtitles[256] = { 0 };
 
 // ETS 300 706, chapter 8.2
 inline uint8_t unham_8_4(uint8_t a) {
@@ -153,7 +153,7 @@ uint32_t get_pes_timestamp(uint8_t *buffer) {
 	uint32_t timestamp = 0;
 	if (((buffer[7] & 0x80) >> 7) > 0) {
 		// __MUST__ assign value to uint64_t and __THEN__ rotate left by 29 bits
-		// << is defined for signed int (as in "C" spec.) and overflow occures 
+		// << is defined for signed int (as in "C" spec.) and overflow occures
 		pts = (buffer[9] & 0x0e);
 		pts <<= 29;
 		pts |= (buffer[10] << 22);
@@ -266,7 +266,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 	static uint8_t serial = 1;
 
  	if (y == 0) {
-		uint8_t i = (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);	 	
+		uint8_t i = (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
 		uint8_t v = (unham_8_4(packet->data[5]) & 0x08) >> 3;
 	 	detected_subtitles[i] |= v << (m - 1);
 	}
@@ -317,7 +317,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 	}
 	else if ((y >= 1) && (y <= 23) && (m == magazine(config_page))) {
 		// FIXME
-		if ((serial == 1) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)) return; 
+		if ((serial == 1) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)) return;
 		if (receiving_data == 1) {
 			// ETS 300 706, chapter 9.4.1: Packets X/26 at presentation Levels 1.5, 2.5, 3.5 are used for addressing
 			// a character location and overwriting the existing character defined on the Level 1 page
@@ -332,7 +332,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 	}
 	else if ((y == 26) && (m == magazine(config_page))) {
 		// FIXME
-		if ((serial == 1) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)) return; 
+		if ((serial == 1) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)) return;
 		if (receiving_data == 1) {
 			// ETS 300 706, chapter 12.3.2 (X/26 definition)
 			uint8_t x26_row = 0;
@@ -418,6 +418,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 				t -= 40271;
 				// 4th step: conversion to time_t
 				time_t t0 = (time_t)t;
+				// ctime output itself is \n ended
 				fprintf(stderr, "INFO: Universal Time Co-ordinated = %s", ctime(&t0));
 
 				programme_title_processed = 1;
@@ -666,7 +667,8 @@ int main(int argc, char *argv[]) {
 	if (config_verbose > 0) {
 		if (frames_produced == 0) fprintf(stderr, "INFO: No frames produced. CC teletext page number was probably wrong.\n");
 		fprintf(stderr, "INFO: There were some CC data carried in pages: ");
-		for (uint8_t i = 0; i < 255; i++) {
+		// We ignore i = 0xff, because 0xff are teletext ending frames
+		for (uint16_t i = 0; i < 255; i++) {
 			for (uint8_t j = 0; j < 8; j++) {
 				uint8_t v = detected_subtitles[i] & (1 << j);
 				if (v > 0) fprintf(stderr, "%03x ", ((j + 1) << 8) | i);
