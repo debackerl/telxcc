@@ -28,6 +28,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
 #ifndef tables_h_included
 #define tables_h_included
 
+#include <inttypes.h>
+
 // G0 charsets
 const uint16_t G0[8][96] = {
 	{ // 000 = english
@@ -239,5 +241,9 @@ const char* COLOURS[8] = {
 	// black, red, green, yellow, blue, magenta, cyan, white
 	"#000000", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff"
 };
+
+const uint8_t DATA_UNIT_EBU_TELETEXT_NONSUBTITLE = 0x02;
+const uint8_t DATA_UNIT_EBU_TELETEXT_SUBTITLE = 0x03;
+const uint8_t DATA_UNIT_EBU_TELETEXT_INVERTED = 0x0c;
 
 #endif

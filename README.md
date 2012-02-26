@@ -15,7 +15,11 @@ telxcc is
 
     $ make ↵
 
-Or maybe you can also copy any *.ts files into current directory and build profiled version (if you know what are you doing):
+On Mac typically you can use clang preprocessor:
+
+    $ make CC=clang ↵
+
+Or maybe you can also copy any *.ts files into current directory and build profiled version (if you *know* what are you doing):
 
     $ make profiled ↵
 

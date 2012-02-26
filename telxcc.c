@@ -75,8 +75,8 @@ typedef struct {
 	uint8_t tainted; // 1 = text variable contains any data
 } teletext_page_t;
 
-const uint8_t DATA_UNIT_EBU_TELETEXT_NONSUBTITLE = 0x02;
-const uint8_t DATA_UNIT_EBU_TELETEXT_SUBTITLE = 0x03;
+// be verbose
+uint16_t config_verbose = 0;
 
 // teletext page containing cc we want to filter
 uint16_t config_page = 0;
@@ -96,9 +96,7 @@ uint32_t config_skip = 0;
 // SRT frames produced
 uint32_t frames_produced = 0;
 
-#ifdef DETECT
 uint8_t detected_subtitles[255] = { 0 };
-#endif
 
 // ETS 300 706, chapter 8.2
 inline uint8_t unham_8_4(uint8_t a) {
@@ -267,13 +265,11 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 	static uint8_t current_charset = 0;
 	static uint8_t serial = 1;
 
-#ifdef DETECT
  	if (y == 0) {
-	 	uint8_t i = (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
+		uint8_t i = (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);	 	
 		uint8_t v = (unham_8_4(packet->data[5]) & 0x08) >> 3;
 	 	detected_subtitles[i] |= v << (m - 1);
 	}
-#endif
 
 	// FIXME: This is ugly, I should fix that. (paralled VBI)
  	if ((y == 0) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_SUBTITLE)) {
@@ -336,7 +332,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 	}
 	else if ((y == 26) && (m == magazine(config_page))) {
 		// FIXME
-		if ((serial == 1) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_NOSUBTITLE)) return; 
+		if ((serial == 1) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)) return; 
 		if (receiving_data == 1) {
 			// ETS 300 706, chapter 12.3.2 (X/26 definition)
 			uint8_t x26_row = 0;
@@ -383,10 +379,10 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 		}
 	}
 	else if (y == 28) {
-		fprintf(stderr, "DEBUG: Packet X/28 received; not yet implemented\n");
+		if (config_verbose > 0) fprintf(stderr, "DEBUG: Packet X/28 received; not yet implemented\n");
 	}
 	else if (y == 29) {
-		fprintf(stderr, "DEBUG: Packet M/29 received; not yet implemented\n");
+		if (config_verbose > 0) fprintf(stderr, "DEBUG: Packet M/29 received; not yet implemented\n");
 	}
 	else if ((y == 30) && (m == 8)) {
 		// ETS 300 706, chapter 9.8: Broadcast Service Data Packets
@@ -422,7 +418,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 				t -= 40271;
 				// 4th step: conversion to time_t
 				time_t t0 = (time_t)t;
-				fprintf(stderr, "INFO: Universal Time Co-ordinated = %s\n", ctime(&t0));
+				fprintf(stderr, "INFO: Universal Time Co-ordinated = %s", ctime(&t0));
 
 				programme_title_processed = 1;
 			}
@@ -463,10 +459,7 @@ void process_pes_packet(uint8_t *buffer, uint16_t size) {
 
 		// vbi units id 0xff should be ignored
 		if (data_unit_id == 0xff) continue;
-		
-		// DATA_UNIT_EBU_TELETEXT_NONSUBTITLE = 0x02
-		// DATA_UNIT_EBU_TELETEXT_SUBTITLE = 0x03
-		// DATA_UNIT_EBU_TELETEXT_INVERTED = 0x0C
+
 		if ((data_unit_id != DATA_UNIT_EBU_TELETEXT_NONSUBTITLE) && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) continue;
 
 		// teletext payload has always size 44 bytes
@@ -507,14 +500,15 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr, "  STDIN       transport stream\n");
 			fprintf(stderr, "  STDOUT      subtitles in SubRip SRT file format (UTF-8 encoded)\n");
 			fprintf(stderr, "  -h          this help text\n");
-			fprintf(stderr, "  -p PAGE     teletext page number carrying closed captioning (default 888)\n");
-			fprintf(stderr, "  -t TID      transport stream PID of teletext data sub-stream (default auto)\n");
-			fprintf(stderr, "  -o OFFSET   subtitles offset in seconds (default 0.0)\n");
+			fprintf(stderr, "  -p PAGE     teletext page number carrying closed captioning (default: 888)\n");
+			fprintf(stderr, "  -t TID      transport stream PID of teletext data sub-stream (default: auto)\n");
+			fprintf(stderr, "  -o OFFSET   subtitles offset in seconds (default: 0.0)\n");
 			fprintf(stderr, "  -n          do not print UTF-8 BOM characters at the beginning of output\n");
 			fprintf(stderr, "  -1          produce at least one (dummy) frame\n");
 			fprintf(stderr, "  -c          output colour information in font HTML tags\n");
 			fprintf(stderr, "              (colours are supported by MPC, MPC HC, VLC, KMPlayer, VSFilter, ffdshow etc.)\n");
-			fprintf(stderr, "  -s SECONDS  skip SECONDS seconds at the beginning of the stream (default 0)\n");
+			fprintf(stderr, "  -s SECONDS  skip SECONDS seconds at the beginning of the stream (default: 0)\n");
+			fprintf(stderr, "  -v          be verbose (default: verboseness turned off, without being quiet)\n");
 			fprintf(stderr, "\n");
 			exit(EXIT_SUCCESS);
 		}
@@ -532,6 +526,8 @@ int main(int argc, char *argv[]) {
 			config_colours = 1;
 		else if (strcmp(argv[i], "-s") == 0)
 			config_skip = atoi(argv[++i]);
+		else if (strcmp(argv[i], "-v") == 0)
+			config_verbose = 1;
 		else {
 			fprintf(stderr, "ERROR: Unknown option %s\n", argv[i]);
 			exit(EXIT_FAILURE);
@@ -622,7 +618,7 @@ int main(int argc, char *argv[]) {
 
 		// uncorrectable error?
 		if (ts_transport_error > 0) {
-			fprintf(stderr, "WARNING: uncorrectable TS packet error (received CC %1x)\n", ts_continuity_counter);
+			if (config_verbose > 0) fprintf(stderr, "WARNING: uncorrectable TS packet error (received CC %1x)\n", ts_continuity_counter);
 			continue;
 		}
 
@@ -641,7 +637,7 @@ int main(int argc, char *argv[]) {
 			if (af_discontinuity == 0) {
 				continuity_counter = (continuity_counter + 1) % 16;
 				if (ts_continuity_counter != continuity_counter) {
-					fprintf(stderr, "WARNING: missing TS packet, flushing pes_buffer (expected CC %1x, received CC %1x, TS discontinuity %s, TS priority %s)\n",
+					if (config_verbose > 0) fprintf(stderr, "WARNING: missing TS packet, flushing pes_buffer (expected CC %1x, received CC %1x, TS discontinuity %s, TS priority %s)\n",
 						continuity_counter, ts_continuity_counter, (af_discontinuity ? "YES" : "NO"), (ts_transport_priority ? "YES" : "NO"));
 					pes_counter = 0;
 					continuity_counter = 255;
@@ -667,21 +663,17 @@ int main(int argc, char *argv[]) {
 		else fprintf(stderr, "WARNING: pes packet size exceeds pes_buffer size, probably not teletext stream\n");
 	}
 
-#ifdef DETECT
-	if (frames_produced == 0) {
-		fprintf(stderr, "WARNING: No frames produced. Maybe CC teletext page number was wrong.\n");
-		fprintf(stderr, "WARNING: There were some CC data carried in pages: ");
+	if (config_verbose > 0) {
+		if (frames_produced == 0) fprintf(stderr, "INFO: No frames produced. CC teletext page number was probably wrong.\n");
+		fprintf(stderr, "INFO: There were some CC data carried in pages: ");
 		for (uint8_t i = 0; i < 255; i++) {
 			for (uint8_t j = 0; j < 8; j++) {
-				register uint8_t v = detected_subtitles[i] & (1 << j);
-				if (v > 0) {
-					fprintf(stderr, "%03x ", ((j + 1) << 8) | i);
-				}
+				uint8_t v = detected_subtitles[i] & (1 << j);
+				if (v > 0) fprintf(stderr, "%03x ", ((j + 1) << 8) | i);
 			}
 		}
 		fprintf(stderr, "\n");
 	}
-#endif
 
 	if ((frames_produced == 0) && (config_nonempty > 0)) {
 		fprintf(stdout, "1\r\n00:00:00,000 --> 00:00:01,000\r\n(no closed captioning available)\r\n\r\n");

@@ -1,21 +1,29 @@
-all : telxcc
+CC = gcc
+CCFLAGS = -O3 -Wall -std=c99
+LDFLAGS = 
 
-telxcc : telxcc.c
-	gcc -D DETECT -c -O3 -Wall -std=c99 -o telxcc.o telxcc.c
-	gcc -D DETECT -o telxcc telxcc.o
-	-strip telxcc
+OBJS = telxcc.o
+EXEC = telxcc
 
-profiled :
-	gcc -fprofile-generate -c -O3 -Wall -std=c99 -o telxcc.o telxcc.c
-	gcc -fprofile-generate -o telxcc telxcc.o
-	for i in `ls -b ./*.ts` ; do ./telxcc -1 -c < $$i > /dev/null ; done
-	-rm -f *.o telxcc
-	gcc -fprofile-use -c -O3 -Wall -std=c99 -o telxcc.o telxcc.c
-	gcc -fprofile-use -o telxcc telxcc.o
-	-strip telxcc
-	-rm -f *.gcda *.gcno *.dyn pgopti.dpi pgopti.dpi.lock
+all : $(EXEC)
+
+strip : $(EXEC)
+	-strip $<
 
 .PHONY : clean
 clean :
-	-rm -f *.o telxcc
+	-rm -f $(OBJS) $(EXEC)
+
+$(EXEC) : $(OBJS)
+	$(CC) $(LDFLAGS) -o $@ $<
+
+%.o : %.c
+	$(CC) -c $(CCFLAGS) -o $@ $<
+
+profiled :
+	make CCFLAGS="$(CCFLAGS) -fprofile-generate" LDFLAGS="$(LDFLAGS) -fprofile-generate" $(EXEC)
+	for i in `ls -b ./*.ts` ; do ./telxcc -1 -c -v -p 888 < $$i > /dev/null 2> /dev/null ; done
+	for i in `ls -b ./*.ts` ; do ./telxcc -1 -c -v -p 777 < $$i > /dev/null 2> /dev/null ; done
+	make clean
+	make CCFLAGS="$(CCFLAGS) -fprofile-use" LDFLAGS="$(LDFLAGS) -fprofile-use" $(EXEC)
 	-rm -f *.gcda *.gcno *.dyn pgopti.dpi pgopti.dpi.lock
