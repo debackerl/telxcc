@@ -90,13 +90,14 @@ double config_offset = 0;
 // output <font...></font> tags?
 uint8_t config_colours = 0;
 
-// number of seconds to skip at the beginning of the stream
-uint32_t config_skip = 0;
-
 // SRT frames produced
 uint32_t frames_produced = 0;
 
+// Subtitle type pages bitmap 
 uint8_t detected_subtitles[256] = { 0 };
+
+// Global TS PCR value
+uint32_t global_timestamp = 0;
 
 // ETS 300 706, chapter 8.2
 inline uint8_t unham_8_4(uint8_t a) {
@@ -144,25 +145,6 @@ inline uint16_t telx_to_ucs2(uint8_t c, uint8_t charset) {
 	uint16_t r = 32;
 	if (PARITY_8[c] == 1) r = ((c & 0x7f) >= 32) ? G0[charset][(c & 0x7f) - 32] : (c & 0x7f);
 	return r;
-}
-
-uint32_t get_pes_timestamp(uint8_t *buffer) {
-	// PTS is 33 bits wide, however, timestamp in ms fits into 32 bits nicely (PTS/90)
-	// presentation and decoder timestamps use the 90 KHz clock, hence PTS/90 = [ms]
-	uint64_t pts = 0;
-	uint32_t timestamp = 0;
-	if (((buffer[7] & 0x80) >> 7) > 0) {
-		// __MUST__ assign value to uint64_t and __THEN__ rotate left by 29 bits
-		// << is defined for signed int (as in "C" spec.) and overflow occures
-		pts = (buffer[9] & 0x0e);
-		pts <<= 29;
-		pts |= (buffer[10] << 22);
-		pts |= ((buffer[11] & 0xfe) << 14);
-		pts |= (buffer[12] << 7);
-		pts |= ((buffer[13] & 0xfe) >> 1);
-		timestamp = pts / 90;
-	}
-	return timestamp;
 }
 
 void process_page(teletext_page_t *page_buffer) {
@@ -269,6 +251,11 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 		uint8_t i = (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
 		uint8_t v = (unham_8_4(packet->data[5]) & 0x08) >> 3;
 	 	detected_subtitles[i] |= v << (m - 1);
+	 	
+		if ((config_page == 0) && (v > 0) && (i < 0xff)) {
+			config_page = (m << 8) | (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
+			fprintf(stderr, "INFO: No teletext page spescified, first received suitable page is %03x, not guaranteed\n", config_page);
+		}
 	}
 
 	// FIXME: This is ugly, I should fix that. (paralled VBI)
@@ -418,7 +405,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 				t -= 40271;
 				// 4th step: conversion to time_t
 				time_t t0 = (time_t)t;
-				// ctime output itself is \n ended
+				// ctime output itself is \n-ended
 				fprintf(stderr, "INFO: Universal Time Co-ordinated = %s", ctime(&t0));
 
 				programme_title_processed = 1;
@@ -440,7 +427,38 @@ void process_pes_packet(uint8_t *buffer, uint16_t size) {
 	// stream_id is not "Private Stream 1" (0xbd)
 	if (pes_stream_id != 0xbd) return;
 
-	uint32_t t = get_pes_timestamp(buffer);
+	uint32_t t = 0;
+
+	static uint8_t using_pts = 255;
+	if (using_pts == 255) {
+		if ((buffer[7] & 0x80) > 0) {
+			using_pts = 1;
+			if (config_verbose > 0) fprintf(stderr, "INFO: PID 0xbd PTS available\n");
+		} else {
+			using_pts = 0;
+			if (config_verbose > 0) fprintf(stderr, "INFO: PID 0xbd PTS unavailable, using TS PCR\n");
+		}
+	}
+
+	// If there is no PTS available, use global PCR
+	if (using_pts > 0) {
+		// PTS is 33 bits wide, however, timestamp in ms fits into 32 bits nicely (PTS/90)
+		// presentation and decoder timestamps use the 90 KHz clock, hence PTS/90 = [ms]
+		uint64_t pts = 0;
+		// __MUST__ assign value to uint64_t and __THEN__ rotate left by 29 bits
+		// << is defined for signed int (as in "C" spec.) and overflow occures
+		pts = (buffer[9] & 0x0e);
+		pts <<= 29;
+		pts |= (buffer[10] << 22);
+		pts |= ((buffer[11] & 0xfe) << 14);
+		pts |= (buffer[12] << 7);
+		pts |= ((buffer[13] & 0xfe) >> 1);
+		t = pts / 90;
+	}
+	else {
+		t = global_timestamp;
+	}
+
 	static int64_t delta = 0;
  	static uint32_t t0 = 0;
 	static uint8_t initialized = 0;
@@ -461,7 +479,8 @@ void process_pes_packet(uint8_t *buffer, uint16_t size) {
 		// vbi units id 0xff should be ignored
 		if (data_unit_id == 0xff) continue;
 
-		if ((data_unit_id != DATA_UNIT_EBU_TELETEXT_NONSUBTITLE) && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) continue;
+		if ((data_unit_id != DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)
+		 && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) continue;
 
 		// teletext payload has always size 44 bytes
 		if (data_unit_len != 0x2c) continue;
@@ -497,18 +516,17 @@ int main(int argc, char *argv[]) {
 	// command line params parsing
 	for (uint8_t i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0) {
-			fprintf(stderr, "Usage: telxcc [-h] | [-p PAGE] [-t TID] [-o OFFSET] [-n] [-1] [-c] [-s SECONDS]\n");
+			fprintf(stderr, "Usage: telxcc [-h] | [-p PAGE] [-t TID] [-o OFFSET] [-n] [-1] [-c] [-v]\n");
 			fprintf(stderr, "  STDIN       transport stream\n");
 			fprintf(stderr, "  STDOUT      subtitles in SubRip SRT file format (UTF-8 encoded)\n");
 			fprintf(stderr, "  -h          this help text\n");
-			fprintf(stderr, "  -p PAGE     teletext page number carrying closed captioning (default: 888)\n");
+			fprintf(stderr, "  -p PAGE     teletext page number carrying closed captioning (default: auto)\n");
 			fprintf(stderr, "  -t TID      transport stream PID of teletext data sub-stream (default: auto)\n");
 			fprintf(stderr, "  -o OFFSET   subtitles offset in seconds (default: 0.0)\n");
 			fprintf(stderr, "  -n          do not print UTF-8 BOM characters at the beginning of output\n");
 			fprintf(stderr, "  -1          produce at least one (dummy) frame\n");
 			fprintf(stderr, "  -c          output colour information in font HTML tags\n");
 			fprintf(stderr, "              (colours are supported by MPC, MPC HC, VLC, KMPlayer, VSFilter, ffdshow etc.)\n");
-			fprintf(stderr, "  -s SECONDS  skip SECONDS seconds at the beginning of the stream (default: 0)\n");
 			fprintf(stderr, "  -v          be verbose (default: verboseness turned off, without being quiet)\n");
 			fprintf(stderr, "\n");
 			exit(EXIT_SUCCESS);
@@ -525,8 +543,6 @@ int main(int argc, char *argv[]) {
 			config_nonempty = 1;
 		else if (strcmp(argv[i], "-c") == 0)
 			config_colours = 1;
-		else if (strcmp(argv[i], "-s") == 0)
-			config_skip = atoi(argv[++i]);
 		else if (strcmp(argv[i], "-v") == 0)
 			config_verbose = 1;
 		else {
@@ -551,11 +567,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	// default teletext page
-	if (config_page == 0) {
-		config_page = 0x888;
-		fprintf(stderr, "INFO: No teletext page specified, using default value %03x\n", config_page);
-	}
-	else {
+	if (config_page > 0) {
 		// dec to BCD, magazine pages numbers are in BCD (ETSI 300 706)
 		config_page = ((config_page / 100) << 8) | (((config_page / 10) % 10) << 4) | (config_page % 10);
 	}
@@ -603,7 +615,24 @@ int main(int argc, char *argv[]) {
 		uint8_t ts_continuity_counter = ts_buffer[3] & 0x0f;
 
 		uint8_t af_discontinuity = 0;
-		if (ts_adaptation_field_exists > 0) af_discontinuity = (ts_buffer[5] & 0x80) >> 7;
+		if (ts_adaptation_field_exists > 0) {
+			af_discontinuity = (ts_buffer[5] & 0x80) >> 7;
+			
+			// PCR v adaptation field
+			uint8_t af_pcr_exists = (ts_buffer[5] & 0x10) >> 4;
+			if (af_pcr_exists > 0) {
+				uint64_t pts = 0;
+				pts |= (ts_buffer[6] << 25);
+				pts |= (ts_buffer[7] << 17);
+				pts |= (ts_buffer[8] << 9);
+				pts |= (ts_buffer[9] << 1);
+				pts |= (ts_buffer[10] >> 7);
+				global_timestamp = pts/90;
+				pts = ((ts_buffer[10] & 0x01) << 8);
+				pts |= ts_buffer[11];
+				global_timestamp += pts/27000;
+			}
+		}
 
 		// not TS packet?
 		if (ts_sync != 0x47) {
@@ -661,7 +690,7 @@ int main(int argc, char *argv[]) {
 			pes_counter += 184;
 			packet_counter++;
 		}
-		else fprintf(stderr, "WARNING: pes packet size exceeds pes_buffer size, probably not teletext stream\n");
+		else if (config_verbose > 0) fprintf(stderr, "WARNING: pes packet size exceeds pes_buffer size, probably not teletext stream\n");
 	}
 
 	if (config_verbose > 0) {

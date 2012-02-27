@@ -19,7 +19,7 @@ On Mac typically you can use clang preprocessor:
 
     $ make CC=clang ↵
 
-Or maybe you can also copy any *.ts files into current directory and build profiled version (if you *know* what are you doing):
+Or maybe you can also copy any \*.ts files into current directory and build profiled version (if you *know* what are you doing):
 
     $ make profiled ↵
 
@@ -28,24 +28,23 @@ telxcc has no lib dependencies and is easy to build and run on Linux, Mac and Wi
 ## Command line params
 
     $ ./telxcc -h ↵
-
     telxcc - teletext closed captioning decoder
     (c) Petr Kutalek <petr.kutalek@forers.com>, 2011-2012; Licensed under the GPL.
     Please consider making a Paypal donation to support our free GNU/GPL software: http://fore.rs/donate/telxcc
-    Built on Feb 21 2012
+    Built on Feb 26 2012
     
-    Usage: telxcc [-h] | [-p PAGE] [-t TID] [-o OFFSET] [-n] [-1] [-c] [-s SECONDS]
+    Usage: telxcc [-h] | [-p PAGE] [-t TID] [-o OFFSET] [-n] [-1] [-c] [-v]
       STDIN       transport stream
       STDOUT      subtitles in SubRip SRT file format (UTF-8 encoded)
       -h          this help text
-      -p PAGE     teletext page number carrying closed captioning (default 888)
-      -t TID      transport stream PID of teletext data sub-stream (default auto)
-      -o OFFSET   subtitles offset in seconds (default 0.0)
+      -p PAGE     teletext page number carrying closed captioning (default: 888)
+      -t TID      transport stream PID of teletext data sub-stream (default: auto)
+      -o OFFSET   subtitles offset in seconds (default: 0.0)
       -n          do not print UTF-8 BOM characters at the beginning of output
       -1          produce at least one (dummy) frame
       -c          output colour information in font HTML tags
                   (colours are supported by MPC, MPC HC, VLC, KMPlayer, VSFilter, ffdshow etc.)
-      -s SECONDS  skip SECONDS seconds at the beginning of the stream (default 0)
+      -v          be verbose (default: verboseness turned off, without being quiet)
 
 ## Usage example
 
@@ -53,12 +52,11 @@ telxcc has no lib dependencies and is easy to build and run on Linux, Mac and Wi
     telxcc - teletext closed captioning decoder
     (c) Petr Kutalek <petr.kutalek@forers.com>, 2011-2012; Licensed under the GPL.
     Please consider making a Paypal donation to support our free GNU/GPL software: http://fore.rs/donate/telxcc
-    Built on Feb 21 2012
+    Built on Feb 26 2012
     
     INFO: No teletext PID specified, first received suitable stream PID is 576 (0x240), not guaranteed
     INFO: Programme Identification Data = "NRK TV              "
     INFO: Universal Time Co-ordinated = Wed Feb 15 19:14:04 2012
-    
     INFO: Done (17745 teletext packets processed, 46 SRT frames written)
     
     $ _
