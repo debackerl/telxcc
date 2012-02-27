@@ -433,10 +433,10 @@ void process_pes_packet(uint8_t *buffer, uint16_t size) {
 	if (using_pts == 255) {
 		if ((buffer[7] & 0x80) > 0) {
 			using_pts = 1;
-			if (config_verbose > 0) fprintf(stderr, "INFO: PID 0xbd PTS available\n");
+			if (config_verbose > 0) fprintf(stderr, "INFO: PID 0xbd PTS available\n");
 		} else {
 			using_pts = 0;
-			if (config_verbose > 0) fprintf(stderr, "INFO: PID 0xbd PTS unavailable, using TS PCR\n");
+			if (config_verbose > 0) fprintf(stderr, "INFO: PID 0xbd PTS unavailable, using TS PCR\n");
 		}
 	}
 
@@ -618,7 +618,7 @@ int main(int argc, char *argv[]) {
 		if (ts_adaptation_field_exists > 0) {
 			af_discontinuity = (ts_buffer[5] & 0x80) >> 7;
 			
-			// PCR v adaptation field
+			// PCR in adaptation field
 			uint8_t af_pcr_exists = (ts_buffer[5] & 0x10) >> 4;
 			if (af_pcr_exists > 0) {
 				uint64_t pts = 0;
