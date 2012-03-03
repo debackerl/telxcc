@@ -19,7 +19,7 @@ On Mac typically you can use clang preprocessor:
 
     $ make CC=clang ↵
 
-Or maybe you can also copy any \*.ts files into current directory and build profiled version (if you *know* what are you doing):
+You can also copy any \*.ts files into the current directory and build a profiled version (up to 3% performance gain on repeat tasks):
 
     $ make profiled ↵
 

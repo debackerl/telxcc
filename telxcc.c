@@ -25,7 +25,8 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
 
 I would like to thank:
-	David Liontooth <lionteeth@cogweb.net> for providing me with Swedish and Norwegian TS samples
+	David Liontooth <lionteeth@cogweb.net> for providing me with Swedish and Norwegian TS samples and patient testing
+	Professor Francis F Steen and his team from UCLA for contribution
 
 telxcc conforms to ETSI 300 706 Presentation Level 1.5:
 	Presentation Level 1 defines the basic Teletext page, characterised by the use of spacing attributes only
@@ -254,7 +255,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 	 	
 		if ((config_page == 0) && (v > 0) && (i < 0xff)) {
 			config_page = (m << 8) | (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
-			fprintf(stderr, "INFO: No teletext page spescified, first received suitable page is %03x, not guaranteed\n", config_page);
+			fprintf(stderr, "INFO: No teletext page specified, first received suitable page is %03x, not guaranteed\n", config_page);
 		}
 	}
 
