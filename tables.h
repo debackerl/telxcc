@@ -242,8 +242,15 @@ const char* COLOURS[8] = {
 	"#000000", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff"
 };
 
-const uint8_t DATA_UNIT_EBU_TELETEXT_NONSUBTITLE = 0x02;
-const uint8_t DATA_UNIT_EBU_TELETEXT_SUBTITLE = 0x03;
-const uint8_t DATA_UNIT_EBU_TELETEXT_INVERTED = 0x0c;
+typedef enum {
+	DATA_UNIT_EBU_TELETEXT_NONSUBTITLE = 0x02,
+	DATA_UNIT_EBU_TELETEXT_SUBTITLE = 0x03,
+	DATA_UNIT_EBU_TELETEXT_INVERTED = 0x0c
+} data_unit_ebu_teletext_t;
+
+typedef enum {
+	TRANSMISSION_MODE_PARALLEL = 0,
+	TRANSMISSION_MODE_SERIAL
+} transmission_mode_t;
 
 #endif

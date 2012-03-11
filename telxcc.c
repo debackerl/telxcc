@@ -94,8 +94,8 @@ uint8_t config_colours = 0;
 // SRT frames produced
 uint32_t frames_produced = 0;
 
-// Subtitle type pages bitmap 
-uint8_t detected_subtitles[256] = { 0 };
+// Subtitle type pages bitmap
+uint8_t cc_map[256] = { 0 };
 
 // Global TS PCR value
 uint32_t global_timestamp = 0;
@@ -111,7 +111,7 @@ inline uint32_t unham_24_18(uint32_t a) {
 	return (((a & 0x04) >> 2) | ((a & 0x70) >> 3) | ((a & 0x7f00) >> 4) | ((a & 0x7f0000) >> 5));
 }
 
-void timestamp_to_srttime(char *buffer, uint64_t timestamp) {
+void timestamp_to_srttime(uint64_t timestamp, char *buffer) {
 	uint64_t p = timestamp;
 	uint8_t h = p / 3600000;
 	uint8_t m = p / 60000 - 60 * h;
@@ -143,38 +143,36 @@ inline void ucs2_to_utf8(char *r, uint16_t ch) {
 
 // check parity and translate any reasonable teletext character into ucs2
 inline uint16_t telx_to_ucs2(uint8_t c, uint8_t charset) {
-	uint16_t r = 32;
-	if (PARITY_8[c] == 1) r = ((c & 0x7f) >= 32) ? G0[charset][(c & 0x7f) - 32] : (c & 0x7f);
+	if (PARITY_8[c] == 0) return '_';
+
+	uint16_t r = c & 0x7f;
+	if (r >= 32) r = G0[charset][r - 32];
 	return r;
 }
 
-void process_page(teletext_page_t *page_buffer) {
+void process_page(const teletext_page_t *page_buffer) {
+//	for (uint8_t row = 1; row < 25; row++) {
+//		fprintf(stdout, "DEBUG[%02u]: ", row);
+//		for (uint8_t col = 0; col < 40; col++) fprintf(stdout, "%02x ", page_buffer->text[row][col]);
+//		fprintf(stdout, "\n");
+//	}
+//	fprintf(stdout, "\n");
+
 	uint8_t page_is_empty = 1;
-
-	// trim lines (find first and last character on each line)
-	uint8_t trim_pos[25][2];
-	for (uint8_t row = 1; row < 25; row++) {
-		trim_pos[row][0] = 0;
-		trim_pos[row][1] = 39;
-		while (trim_pos[row][0] <= trim_pos[row][1])
-			if (page_buffer->text[row][trim_pos[row][0]] > 32) break;
-			else trim_pos[row][0]++;
-		while (trim_pos[row][0] <= trim_pos[row][1])
-			if (page_buffer->text[row][trim_pos[row][1]] > 32) break;
-			else trim_pos[row][1]--;
-
-		// we have found at least one non-empty line on the page
-		if (trim_pos[row][0] <= trim_pos[row][1]) page_is_empty = 0;
-	}
-
+	for (uint8_t row = 1; row < 25; row++)
+		for (uint8_t col = 0; col < 40; col++)
+			if (page_buffer->text[row][col] == 0x0b) {
+				page_is_empty = 0;
+				break;
+			}
 	if (page_is_empty == 1) return;
 
 	char timecode_show[24] = { 0 };
-	timestamp_to_srttime(timecode_show, page_buffer->show_timestamp);
+	timestamp_to_srttime(page_buffer->show_timestamp, timecode_show);
 	timecode_show[12] = 0;
 
 	char timecode_hide[24] = { 0 };
-	timestamp_to_srttime(timecode_hide, page_buffer->hide_timestamp);
+	timestamp_to_srttime(page_buffer->hide_timestamp, timecode_hide);
 	timecode_hide[12] = 0;
 
 	// print SRT frame
@@ -184,47 +182,69 @@ void process_page(teletext_page_t *page_buffer) {
 
 	// process data
 	for (uint8_t row = 1; row < 25; row++) {
-		// skip empty line
-		if (trim_pos[row][0] > trim_pos[row][1]) continue;
+		uint8_t in_boxed_area = 0;
+		uint8_t foreground_color = 7;
 
-		for (uint8_t i = 0; i < 40; i++) {
-			if (config_colours == 1) {
-				// white is default as stated in ETS 300 706, chapter 12.2
-				// black is considered as white for telxcc purpose
-				// telxcc writes <font/> tags only when needed
-				// black(0), red, green, yellow, blue, magenta, cyan, white
-				if (page_buffer->text[row][i] <= 0x07) {
-					if (font_tag_opened == 1) {
-						fprintf(stdout, "</font> ");
-						font_tag_opened = 0;
-					}
-					if ((page_buffer->text[row][i] >= 0x01) && (page_buffer->text[row][i] <= 0x06)) {
-						fprintf(stdout, "<font color=\"%s\">", COLOURS[page_buffer->text[row][i]]);
-						font_tag_opened = 1;
-					}
-				}
-				if (page_buffer->text[row][i] == 0x0a) {
+		// skip empty lines
+		uint8_t line_is_empty = 1;
+		for (uint8_t col = 0; col < 40; col++)
+			if (page_buffer->text[row][col] == 0x0b) {
+				line_is_empty = 0;
+				break;
+			}
+		if (line_is_empty == 1) continue;
+
+		for (uint8_t col = 0; col < 40; col++) {
+			uint16_t v = page_buffer->text[row][col];
+
+			if (col == 39) {
+				if (config_colours == 1) {
 					if (font_tag_opened == 1) {
 						fprintf(stdout, "</font> ");
 						font_tag_opened = 0;
 					}
 				}
+				in_boxed_area = 0;
+				continue;
 			}
 
-			if ((i >= trim_pos[row][0]) && (i <= trim_pos[row][1]) && (page_buffer->text[row][i] >= 32)) {
+			// Colours:
+			// white is default as stated in ETS 300 706, chapter 12.2
+			// black is considered as white for telxcc purpose
+			// telxcc writes <font/> tags only when needed
+			// black(0), red, green, yellow, blue, magenta, cyan, white
+			if ((v >= 0x01) && (v <= 0x07)) {
+				if (config_colours == 1) {
+					if (font_tag_opened == 1) {
+						fprintf(stdout, "</font> ");
+						font_tag_opened = 0;
+					}
+					if (v != foreground_color) {
+						fprintf(stdout, "<font color=\"%s\">", COLOURS[page_buffer->text[row][col]]);
+						font_tag_opened = 1;
+						foreground_color = v;
+					}
+				}
+				else v = 32;
+			}
+
+			if (v == 0x0b) {
+				in_boxed_area = 1;
+				continue;
+			}
+
+			if (v == 0x0a) {
+				in_boxed_area = 0;
+				continue;
+			}
+
+			if (in_boxed_area == 1) {
+				if (v < 32) v = 32;
 				char u[4] = {0, 0, 0, 0};
-				ucs2_to_utf8(u, page_buffer->text[row][i]);
+				ucs2_to_utf8(u, v);
 				fprintf(stdout, "%s", u);
 			}
 		}
-
-		if (config_colours == 1) {
-			if (font_tag_opened == 1) {
-				fprintf(stdout, "</font> ");
-				font_tag_opened = 0;
-			}
-		}
-
 		fprintf(stdout, "\r\n");
 	}
 
@@ -246,30 +266,35 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 	static teletext_page_t page_buffer;
 	static uint8_t receiving_data = 0;
 	static uint8_t current_charset = 0;
-	static uint8_t serial = 1;
+
+	static transmission_mode_t transmission_mode = TRANSMISSION_MODE_SERIAL;
 
  	if (y == 0) {
+	 	// CC map
 		uint8_t i = (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
-		uint8_t v = (unham_8_4(packet->data[5]) & 0x08) >> 3;
-	 	detected_subtitles[i] |= v << (m - 1);
-	 	
-		if ((config_page == 0) && (v > 0) && (i < 0xff)) {
+		uint8_t flag_subtitle = (unham_8_4(packet->data[5]) & 0x08) >> 3;
+		cc_map[i] |= flag_subtitle << (m - 1);
+
+		if ((config_page == 0) && (flag_subtitle > 0) && (i < 0xff)) {
 			config_page = (m << 8) | (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
 			fprintf(stderr, "INFO: No teletext page specified, first received suitable page is %03x, not guaranteed\n", config_page);
 		}
 	}
-
-	// FIXME: This is ugly, I should fix that. (paralled VBI)
- 	if ((y == 0) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_SUBTITLE)) {
+	
+	if ((y == 0) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_SUBTITLE)) {
  		// Page number and control bits
 		uint16_t page_number = (m << 8) | (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
 		uint8_t charset = ((unham_8_4(packet->data[7]) & 0x08) | (unham_8_4(packet->data[7]) & 0x04) | (unham_8_4(packet->data[7]) & 0x02)) >> 1;
 		//uint8_t flag_suppress_header = unham_8_4(packet->data[6]) & 0x01;
-		//uint8_t flag_subtitle = (unham_8_4(packet->data[5]) & 0x08) >> 3;
 		//uint8_t flag_inhibit_display = (unham_8_4(packet->data[6]) & 0x08) >> 3;
-		uint8_t flag_magazine_serial = unham_8_4(packet->data[7]) & 0x01;
-		// FIXME
-		serial = flag_magazine_serial;
+
+		// ETS 300 706, chapter 9.3.1.3:
+		// When set to '1' the service is designated to be in Serial mode and the transmission of a page is terminated
+		// by the next page header with a different page number.
+		// When set to '0' the service is designated to be in Parallel mode and the transmission of a page is terminated
+		// by the next page header with a different page number but the same magazine number.
+		// The same setting shall be used for all page headers in the service.
+		transmission_mode = unham_8_4(packet->data[7]) & 0x01;
 
 		// ETS 300 706, chapter 7.2.1: Page is terminated by and excludes the next page header packet
 		// having the same magazine address in parallel transmission mode, or any magazine address in serial transmission mode.
@@ -304,8 +329,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 */
 	}
 	else if ((y >= 1) && (y <= 23) && (m == magazine(config_page))) {
-		// FIXME
-		if ((serial == 1) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)) return;
+		if ((transmission_mode == TRANSMISSION_MODE_SERIAL) && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) return;
 		if (receiving_data == 1) {
 			// ETS 300 706, chapter 9.4.1: Packets X/26 at presentation Levels 1.5, 2.5, 3.5 are used for addressing
 			// a character location and overwriting the existing character defined on the Level 1 page
@@ -315,12 +339,10 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 			for (uint8_t i = 0; i < 40; i++)
 				if (page_buffer.text[y][i] == 0x00) page_buffer.text[y][i] = telx_to_ucs2(packet->data[i], current_charset);
 			page_buffer.tainted = 1;
-
 		}
 	}
 	else if ((y == 26) && (m == magazine(config_page))) {
-		// FIXME
-		if ((serial == 1) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)) return;
+		if ((transmission_mode == TRANSMISSION_MODE_SERIAL) && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) return;
 		if (receiving_data == 1) {
 			// ETS 300 706, chapter 12.3.2 (X/26 definition)
 			uint8_t x26_row = 0;
@@ -378,13 +400,13 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 		if (programme_title_processed == 0) {
 			// ETS 300 706, chapter 9.8.1: Packet 8/30 Format 1
 			if (unham_8_4(packet->data[0]) < 2) {
-				fprintf(stderr, "INFO: Programme Identification Data = \"");
+				fprintf(stderr, "INFO: Programme Identification Data = ");
 				for (uint8_t i = 20; i < 40; i++) {
 					char u[4] = {0, 0, 0, 0};
 					ucs2_to_utf8(u, telx_to_ucs2(packet->data[i], current_charset));
 					fprintf(stderr, "%s", u);
 				}
-				fprintf(stderr, "\"\n");
+				fprintf(stderr, "\n");
 
 				// OMG! ETS 300 706 stores timestamp in 7 bytes in Modified Julian Day in BCD format + HH:MM:SS in BCD format
 				// + timezone as 5-bit count of half-hours from GMT with 1-bit sign
@@ -408,6 +430,8 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 				time_t t0 = (time_t)t;
 				// ctime output itself is \n-ended
 				fprintf(stderr, "INFO: Universal Time Co-ordinated = %s", ctime(&t0));
+
+				if (config_verbose > 0) fprintf(stderr, "INFO: Transmission mode = %s\n", (transmission_mode == 1 ? "serial" : "parallel"));
 
 				programme_title_processed = 1;
 			}
@@ -504,7 +528,7 @@ void signal_handler(int sig) {
 	}
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, const char *argv[]) {
 	fprintf(stderr, "telxcc - teletext closed captioning decoder\n");
 	fprintf(stderr, "(c) Petr Kutalek <petr.kutalek@forers.com>, 2011-2012; Licensed under the GPL.\n");
 	fprintf(stderr, "Please consider making a Paypal donation to support our free GNU/GPL software: http://fore.rs/donate/telxcc\n");
@@ -618,7 +642,7 @@ int main(int argc, char *argv[]) {
 		uint8_t af_discontinuity = 0;
 		if (ts_adaptation_field_exists > 0) {
 			af_discontinuity = (ts_buffer[5] & 0x80) >> 7;
-			
+
 			// PCR in adaptation field
 			uint8_t af_pcr_exists = (ts_buffer[5] & 0x10) >> 4;
 			if (af_pcr_exists > 0) {
@@ -696,11 +720,11 @@ int main(int argc, char *argv[]) {
 
 	if (config_verbose > 0) {
 		if (frames_produced == 0) fprintf(stderr, "INFO: No frames produced. CC teletext page number was probably wrong.\n");
-		fprintf(stderr, "INFO: There were some CC data carried in pages: ");
+		fprintf(stderr, "INFO: There were some CC data carried via pages: ");
 		// We ignore i = 0xff, because 0xff are teletext ending frames
 		for (uint16_t i = 0; i < 255; i++) {
 			for (uint8_t j = 0; j < 8; j++) {
-				uint8_t v = detected_subtitles[i] & (1 << j);
+				uint8_t v = cc_map[i] & (1 << j);
 				if (v > 0) fprintf(stderr, "%03x ", ((j + 1) << 8) | i);
 			}
 		}
