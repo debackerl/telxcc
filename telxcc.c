@@ -35,9 +35,9 @@ telxcc conforms to ETSI 300 706 Presentation Level 1.5:
 
 Algorithm workflow:
 	main (processing TS)
-		process_pes_packet (processing PS)
-			process_telx_packet (processing teletext stream)
-				process_page (processing teletext data)
+	process_pes_packet (processing PS)
+	process_telx_packet (processing teletext stream)
+	process_page (processing teletext data)
 
 Further Documentation:
 	ISO/IEC 13818-1 (Information technology - Generic coding of moving pictures and associated audio information: Systems):
@@ -143,7 +143,7 @@ inline void ucs2_to_utf8(char *r, uint16_t ch) {
 
 // check parity and translate any reasonable teletext character into ucs2
 inline uint16_t telx_to_ucs2(uint8_t c, uint8_t charset) {
-	if (PARITY_8[c] == 0) return '_';
+	if (PARITY_8[c] == 0) return 32;
 
 	uint16_t r = c & 0x7f;
 	if (r >= 32) r = G0[charset][r - 32];
@@ -151,20 +151,24 @@ inline uint16_t telx_to_ucs2(uint8_t c, uint8_t charset) {
 }
 
 void process_page(const teletext_page_t *page_buffer) {
-//	for (uint8_t row = 1; row < 25; row++) {
-//		fprintf(stdout, "DEBUG[%02u]: ", row);
-//		for (uint8_t col = 0; col < 40; col++) fprintf(stdout, "%02x ", page_buffer->text[row][col]);
-//		fprintf(stdout, "\n");
-//	}
-//	fprintf(stdout, "\n");
+#ifdef DEBUG
+	for (uint8_t row = 1; row < 25; row++) {
+		fprintf(stdout, "DEBUG[%02u]: ", row);
+		for (uint8_t col = 0; col < 40; col++) fprintf(stdout, "%02x ", page_buffer->text[row][col]);
+		fprintf(stdout, "\n");
+	}
+	fprintf(stdout, "\n");
+#endif
 
+	// optimalization: slicing column by column -- higher probability we could find boxed area start mark sooner
 	uint8_t page_is_empty = 1;
-	for (uint8_t row = 1; row < 25; row++)
-		for (uint8_t col = 0; col < 40; col++)
+	for (uint8_t col = 0; col < 40; col++)
+		for (uint8_t row = 1; row < 25; row++)
 			if (page_buffer->text[row][col] == 0x0b) {
 				page_is_empty = 0;
-				break;
+				goto page_is_empty;
 			}
+	page_is_empty:
 	if (page_is_empty == 1) return;
 
 	char timecode_show[24] = { 0 };
@@ -178,10 +182,9 @@ void process_page(const teletext_page_t *page_buffer) {
 	// print SRT frame
 	fprintf(stdout, "%"PRIu32"\r\n%s --> %s\r\n", ++frames_produced, timecode_show, timecode_hide);
 
-	uint8_t font_tag_opened = 0;
-
 	// process data
 	for (uint8_t row = 1; row < 25; row++) {
+		uint8_t font_tag_opened = 0;
 		uint8_t in_boxed_area = 0;
 		uint8_t foreground_color = 7;
 
@@ -190,19 +193,18 @@ void process_page(const teletext_page_t *page_buffer) {
 		for (uint8_t col = 0; col < 40; col++)
 			if (page_buffer->text[row][col] == 0x0b) {
 				line_is_empty = 0;
-				break;
+				goto line_is_empty;
 			}
+		line_is_empty:
 		if (line_is_empty == 1) continue;
 
 		for (uint8_t col = 0; col < 40; col++) {
 			uint16_t v = page_buffer->text[row][col];
 
 			if (col == 39) {
-				if (config_colours == 1) {
-					if (font_tag_opened == 1) {
-						fprintf(stdout, "</font> ");
-						font_tag_opened = 0;
-					}
+				if ((config_colours == 1) && (font_tag_opened == 1)) {
+					fprintf(stdout, "</font> ");
+					font_tag_opened = 0;
 				}
 				in_boxed_area = 0;
 				continue;
@@ -220,7 +222,7 @@ void process_page(const teletext_page_t *page_buffer) {
 						font_tag_opened = 0;
 					}
 					if (v != foreground_color) {
-						fprintf(stdout, "<font color=\"%s\">", COLOURS[page_buffer->text[row][col]]);
+						fprintf(stdout, "<font color=\"%s\">", COLOURS[v]);
 						font_tag_opened = 1;
 						foreground_color = v;
 					}
@@ -235,6 +237,7 @@ void process_page(const teletext_page_t *page_buffer) {
 
 			if (v == 0x0a) {
 				in_boxed_area = 0;
+				col = 38;
 				continue;
 			}
 
@@ -502,10 +505,8 @@ void process_pes_packet(uint8_t *buffer, uint16_t size) {
 		uint8_t data_unit_len = buffer[i + 1];
 
 		// vbi units id 0xff should be ignored
-		if (data_unit_id == 0xff) continue;
-
-		if ((data_unit_id != DATA_UNIT_EBU_TELETEXT_NONSUBTITLE)
-		 && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) continue;
+		//if (data_unit_id == 0xff) continue;
+		if ((data_unit_id != DATA_UNIT_EBU_TELETEXT_NONSUBTITLE) && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) continue;
 
 		// teletext payload has always size 44 bytes
 		if (data_unit_len != 0x2c) continue;
