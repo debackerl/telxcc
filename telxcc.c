@@ -567,17 +567,17 @@ int main(int argc, const char *argv[]) {
 	for (uint8_t i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0) {
 			fprintf(stderr, "Usage: telxcc [-h] | [-p PAGE] [-t TID] [-o OFFSET] [-d DUR] [-n] [-1] [-c] [-v]\n");
-			fprintf(stderr, "  STDIN      transport stream\n");
-			fprintf(stderr, "  STDOUT     subtitles in SubRip SRT file format (UTF-8 encoded)\n");
-			fprintf(stderr, "  -h         this help text\n");
-			fprintf(stderr, "  -p PAGE    teletext page number carrying closed captioning (default: auto)\n");
-			fprintf(stderr, "  -t TID     transport stream PID of teletext data sub-stream (default: auto)\n");
-			fprintf(stderr, "  -o OFFSET  subtitles offset in seconds (default: 0.0)\n");
-			fprintf(stderr, "  -n         do not print UTF-8 BOM characters at the beginning of output\n");
-			fprintf(stderr, "  -1         produce at least one (dummy) frame\n");
-			fprintf(stderr, "  -c         output colour information in font HTML tags\n");
-			fprintf(stderr, "             (colours are supported by MPC, MPC HC, VLC, KMPlayer, VSFilter, ffdshow etc.)\n");
-			fprintf(stderr, "  -v         be verbose (default: verboseness turned off, without being quiet)\n");
+			fprintf(stderr, "  STDIN       transport stream\n");
+			fprintf(stderr, "  STDOUT      subtitles in SubRip SRT file format (UTF-8 encoded)\n");
+			fprintf(stderr, "  -h          this help text\n");
+			fprintf(stderr, "  -p PAGE     teletext page number carrying closed captioning (default: auto)\n");
+			fprintf(stderr, "  -t TID      transport stream PID of teletext data sub-stream (default: auto)\n");
+			fprintf(stderr, "  -o OFFSET   subtitles offset in seconds (default: 0.0)\n");
+			fprintf(stderr, "  -n          do not print UTF-8 BOM characters at the beginning of output\n");
+			fprintf(stderr, "  -1          produce at least one (dummy) frame\n");
+			fprintf(stderr, "  -c          output colour information in font HTML tags\n");
+			fprintf(stderr, "              (colours are supported by MPC, MPC HC, VLC, KMPlayer, VSFilter, ffdshow etc.)\n");
+			fprintf(stderr, "  -v          be verbose (default: verboseness turned off, without being quiet)\n");
 			fprintf(stderr, "\n");
 			exit(EXIT_SUCCESS);
 		}
