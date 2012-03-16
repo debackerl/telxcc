@@ -62,6 +62,9 @@ Further Documentation:
 #include <inttypes.h>
 #include "tables.h"
 
+// size of a TS packet in bytes
+#define TS_PACKET_SIZE 188
+
 typedef struct {
 	uint8_t _clock_run_in; // not needed
 	uint8_t _framing_code; // not needed, ETSI 300 706: const 0xe4
@@ -92,6 +95,9 @@ double config_offset = 0;
 // output <font...></font> tags?
 uint8_t config_colours = 0;
 
+// working teletext page
+teletext_page_t page_buffer;
+
 // SRT frames produced
 uint32_t frames_produced = 0;
 
@@ -100,6 +106,9 @@ uint8_t cc_map[256] = { 0 };
 
 // Global TS PCR value
 uint32_t global_timestamp = 0;
+
+// Last timestamp value computed
+uint64_t last_timestamp = 0;
 
 // ETS 300 706, chapter 8.2
 inline uint8_t unham_8_4(uint8_t a) {
@@ -151,11 +160,11 @@ inline uint16_t telx_to_ucs2(uint8_t c, uint8_t charset) {
 	return r;
 }
 
-void process_page(const teletext_page_t *page_buffer) {
+void process_page() {
 #ifdef DEBUG
 	for (uint8_t row = 1; row < 25; row++) {
 		fprintf(stdout, "DEBUG[%02u]: ", row);
-		for (uint8_t col = 0; col < 40; col++) fprintf(stdout, "%02x ", page_buffer->text[row][col]);
+		for (uint8_t col = 0; col < 40; col++) fprintf(stdout, "%02x ", page_buffer.text[row][col]);
 		fprintf(stdout, "\n");
 	}
 	fprintf(stdout, "\n");
@@ -165,7 +174,7 @@ void process_page(const teletext_page_t *page_buffer) {
 	uint8_t page_is_empty = 1;
 	for (uint8_t col = 0; col < 40; col++)
 		for (uint8_t row = 1; row < 25; row++)
-			if (page_buffer->text[row][col] == 0x0b) {
+			if (page_buffer.text[row][col] == 0x0b) {
 				page_is_empty = 0;
 				goto page_is_empty;
 			}
@@ -173,11 +182,11 @@ void process_page(const teletext_page_t *page_buffer) {
 	if (page_is_empty == 1) return;
 
 	char timecode_show[24] = { 0 };
-	timestamp_to_srttime(page_buffer->show_timestamp, timecode_show);
+	timestamp_to_srttime(page_buffer.show_timestamp, timecode_show);
 	timecode_show[12] = 0;
 
 	char timecode_hide[24] = { 0 };
-	timestamp_to_srttime(page_buffer->hide_timestamp, timecode_hide);
+	timestamp_to_srttime(page_buffer.hide_timestamp, timecode_hide);
 	timecode_hide[12] = 0;
 
 	// print SRT frame
@@ -192,7 +201,7 @@ void process_page(const teletext_page_t *page_buffer) {
 		// skip empty lines
 		uint8_t line_is_empty = 1;
 		for (uint8_t col = 0; col < 40; col++)
-			if (page_buffer->text[row][col] == 0x0b) {
+			if (page_buffer.text[row][col] == 0x0b) {
 				line_is_empty = 0;
 				goto line_is_empty;
 			}
@@ -200,7 +209,7 @@ void process_page(const teletext_page_t *page_buffer) {
 		if (line_is_empty == 1) continue;
 
 		for (uint8_t col = 0; col < 40; col++) {
-			uint16_t v = page_buffer->text[row][col];
+			uint16_t v = page_buffer.text[row][col];
 
 			// last column -- close font tag
 			if (col == 39) {
@@ -259,28 +268,26 @@ void process_page(const teletext_page_t *page_buffer) {
 	}
 
 	fprintf(stdout, "\r\n");
-	fflush(stdout);
 }
 
 inline uint8_t magazine(uint16_t page) {
 	return ((page >> 8) & 0xf);
 }
 
-void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet, uint64_t timestamp) {
+void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet, uint8_t length, uint64_t timestamp) {
 	// variable names conform to ETS 300 706, chapter 7.1.2
 	uint8_t address = (unham_8_4(packet->address[1]) << 4) | unham_8_4(packet->address[0]);
 	uint8_t m = address & 0x7;
 	if (m == 0) m = 8;
 	uint8_t y = (address >> 3) & 0x1f;
 
-	static teletext_page_t page_buffer;
 	static uint8_t receiving_data = 0;
 	static uint8_t current_charset = 0;
 
 	static transmission_mode_t transmission_mode = TRANSMISSION_MODE_SERIAL;
 
- 	if (y == 0) {
-	 	// CC map
+	if (y == 0) {
+		// CC map
 		uint8_t i = (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
 		uint8_t flag_subtitle = (unham_8_4(packet->data[5]) & 0x08) >> 3;
 		cc_map[i] |= flag_subtitle << (m - 1);
@@ -290,9 +297,9 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 			fprintf(stderr, "INFO: No teletext page specified, first received suitable page is %03x, not guaranteed\n", config_page);
 		}
 	}
-	
+
 	if ((y == 0) && (data_unit_id == DATA_UNIT_EBU_TELETEXT_SUBTITLE)) {
- 		// Page number and control bits
+		// Page number and control bits
 		uint16_t page_number = (m << 8) | (unham_8_4(packet->data[1]) << 4) | unham_8_4(packet->data[0]);
 		uint8_t charset = ((unham_8_4(packet->data[7]) & 0x08) | (unham_8_4(packet->data[7]) & 0x04) | (unham_8_4(packet->data[7]) & 0x02)) >> 1;
 		uint8_t flag_suppress_header = unham_8_4(packet->data[6]) & 0x01;
@@ -332,7 +339,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 		// I know -- not needed; in subtitles we will never need disturbing teletext page status bar
 		// displaying tv station name, current time etc.
 		if (flag_suppress_header == 0) {
-			for (uint8_t i = 14; i < 40; i++)
+			for (uint8_t i = 14; i < length; i++)
 				page_buffer.text[y][i] = telx_to_ucs2(packet->data[i], current_charset);
 		}
 	}
@@ -344,14 +351,14 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 			// ETS 300 706, annex B.2.2: Packets with Y = 26 shall be transmitted before any packets with Y = 1 to Y = 25;
 			// so page_buffer.text[y][i] may already contain any character received
 			// in frame number 26, skip original G0 character
-			for (uint8_t i = 0; i < 40; i++)
+			for (uint8_t i = 0; i < length; i++)
 				if (page_buffer.text[y][i] == 0x00) page_buffer.text[y][i] = telx_to_ucs2(packet->data[i], current_charset);
 			page_buffer.tainted = 1;
 		}
 	}
 	else if ((y == 26) && (m == magazine(config_page))) {
 		if ((transmission_mode == TRANSMISSION_MODE_SERIAL) && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) return;
-		if (receiving_data == 1) {
+		if (receiving_data == 1 && length == 40) {
 			// ETS 300 706, chapter 12.3.2 (X/26 definition)
 			uint8_t x26_row = 0;
 			uint8_t x26_col = 0;
@@ -405,7 +412,7 @@ void process_telx_packet(uint8_t data_unit_id, teletext_packet_payload_t *packet
 	else if ((y == 30) && (m == 8)) {
 		// ETS 300 706, chapter 9.8: Broadcast Service Data Packets
 		static uint8_t programme_title_processed = 0;
-		if (programme_title_processed == 0) {
+		if (programme_title_processed == 0 && length == 40) {
 			// ETS 300 706, chapter 9.8.1: Packet 8/30 Format 1
 			if (unham_8_4(packet->data[0]) < 2) {
 				fprintf(stderr, "INFO: Programme Identification Data = ");
@@ -452,7 +459,12 @@ void process_pes_packet(uint8_t *buffer, uint16_t size) {
 	// Packetized Elementary Stream (PES) 32-bit start code
 	uint64_t pes_prefix = (buffer[0] << 16) | (buffer[1] << 8) | buffer[2];
 	uint8_t pes_stream_id = buffer[3];
-	uint16_t pes_packet_length = (buffer[4] << 8) | buffer[5];
+
+	// we are explicitly including header size
+	uint16_t pes_packet_length = 6 + ((buffer[4] << 8) | buffer[5]);
+
+	// truncate incomplete PES packets
+	if (pes_packet_length > size) pes_packet_length = size;
 
 	// check for PES header
 	if (pes_prefix != 0x000001) return;
@@ -493,7 +505,7 @@ void process_pes_packet(uint8_t *buffer, uint16_t size) {
 	}
 
 	static int64_t delta = 0;
- 	static uint32_t t0 = 0;
+	static uint32_t t0 = 0;
 	static uint8_t initialized = 0;
 	if (initialized == 0) {
 		delta = 1000 * config_offset - t;
@@ -502,25 +514,32 @@ void process_pes_packet(uint8_t *buffer, uint16_t size) {
 	}
 	if (t < t0) delta += 95443718;
 	t0 = t;
-	uint64_t timestamp = t + delta;
+	last_timestamp = t + delta;
 
 	// Skip PES header and process each 46-byte teletext packet
-	for (uint16_t i = buffer[8] + 10; i < (pes_packet_length - 46); i += 46) {
-		uint8_t data_unit_id = buffer[i];
-		uint8_t data_unit_len = buffer[i + 1];
+	for (uint16_t i = buffer[8] + 10; i <= (pes_packet_length - 6); ) {
+		uint8_t data_unit_id = buffer[i++];
+		uint8_t data_unit_len = buffer[i++];
 
 		// vbi units id 0xff should be ignored
 		//if (data_unit_id == 0xff) continue;
-		if ((data_unit_id != DATA_UNIT_EBU_TELETEXT_NONSUBTITLE) && (data_unit_id != DATA_UNIT_EBU_TELETEXT_SUBTITLE)) continue;
+		if ((data_unit_id == DATA_UNIT_EBU_TELETEXT_NONSUBTITLE) || (data_unit_id == DATA_UNIT_EBU_TELETEXT_SUBTITLE)) {
+			// teletext payload has always size 44 bytes
+			if (data_unit_len == 0x2c) {
+				// compute number of characters available
+				uint8_t length = pes_packet_length - i - 4;
+				if(length >= data_unit_len) length = data_unit_len;
+				else VERBOSE fprintf(stderr, "teletext closed caption packet truncated\n");
 
-		// teletext payload has always size 44 bytes
-		if (data_unit_len != 0x2c) continue;
+				// reverse endianess (via lookup table), ETS 300 706, chapter 7.1
+				for (uint8_t j = 0; j < length; j++)
+					buffer[i + j] = REVERSE[buffer[i + j]];
 
-		// reverse endianess (via lookup table), ETS 300 706, chapter 7.1
-		for (uint8_t j = 0; j < data_unit_len; j++)
-			buffer[i + 2 + j] = REVERSE[buffer[i + 2 + j]];
+				process_telx_packet(data_unit_id, (teletext_packet_payload_t *)&buffer[i], length, last_timestamp);
+			}
+		}
 
-		process_telx_packet(data_unit_id, (teletext_packet_payload_t *)&buffer[i + 2], timestamp);
+		i += data_unit_len;
 	}
 }
 
@@ -547,26 +566,26 @@ int main(int argc, const char *argv[]) {
 	// command line params parsing
 	for (uint8_t i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0) {
-			fprintf(stderr, "Usage: telxcc [-h] | [-p PAGE] [-t TID] [-o OFFSET] [-n] [-1] [-c] [-v]\n");
-			fprintf(stderr, "  STDIN       transport stream\n");
-			fprintf(stderr, "  STDOUT      subtitles in SubRip SRT file format (UTF-8 encoded)\n");
-			fprintf(stderr, "  -h          this help text\n");
-			fprintf(stderr, "  -p PAGE     teletext page number carrying closed captioning (default: auto)\n");
-			fprintf(stderr, "  -t TID      transport stream PID of teletext data sub-stream (default: auto)\n");
-			fprintf(stderr, "  -o OFFSET   subtitles offset in seconds (default: 0.0)\n");
-			fprintf(stderr, "  -n          do not print UTF-8 BOM characters at the beginning of output\n");
-			fprintf(stderr, "  -1          produce at least one (dummy) frame\n");
-			fprintf(stderr, "  -c          output colour information in font HTML tags\n");
-			fprintf(stderr, "              (colours are supported by MPC, MPC HC, VLC, KMPlayer, VSFilter, ffdshow etc.)\n");
-			fprintf(stderr, "  -v          be verbose (default: verboseness turned off, without being quiet)\n");
+			fprintf(stderr, "Usage: telxcc [-h] | [-p PAGE] [-t TID] [-o OFFSET] [-d DUR] [-n] [-1] [-c] [-v]\n");
+			fprintf(stderr, "  STDIN      transport stream\n");
+			fprintf(stderr, "  STDOUT     subtitles in SubRip SRT file format (UTF-8 encoded)\n");
+			fprintf(stderr, "  -h         this help text\n");
+			fprintf(stderr, "  -p PAGE    teletext page number carrying closed captioning (default: auto)\n");
+			fprintf(stderr, "  -t TID     transport stream PID of teletext data sub-stream (default: auto)\n");
+			fprintf(stderr, "  -o OFFSET  subtitles offset in seconds (default: 0.0)\n");
+			fprintf(stderr, "  -n         do not print UTF-8 BOM characters at the beginning of output\n");
+			fprintf(stderr, "  -1         produce at least one (dummy) frame\n");
+			fprintf(stderr, "  -c         output colour information in font HTML tags\n");
+			fprintf(stderr, "             (colours are supported by MPC, MPC HC, VLC, KMPlayer, VSFilter, ffdshow etc.)\n");
+			fprintf(stderr, "  -v         be verbose (default: verboseness turned off, without being quiet)\n");
 			fprintf(stderr, "\n");
 			exit(EXIT_SUCCESS);
 		}
-		else if (strcmp(argv[i], "-p") == 0)
+		else if (strcmp(argv[i], "-p") == 0 && i+1 < argc)
 			config_page = atoi(argv[++i]);
-		else if (strcmp(argv[i], "-t") == 0)
+		else if (strcmp(argv[i], "-t") == 0 && i+1 < argc)
 			config_tid = atoi(argv[++i]);
-		else if (strcmp(argv[i], "-o") == 0)
+		else if (strcmp(argv[i], "-o") == 0 && i+1 < argc)
 			config_offset = atof(argv[++i]);
 		else if (strcmp(argv[i], "-n") == 0)
 			config_bom = 0;
@@ -612,14 +631,13 @@ int main(int argc, const char *argv[]) {
 	// print UTF-8 BOM chars
 	if (config_bom == 1) {
 		fprintf(stdout, "\xef\xbb\xbf");
-		fflush(stdout);
 	}
 
 	// FYI, packet counter
 	uint32_t packet_counter = 0;
 
 	// TS packet buffer
-	uint8_t ts_buffer[188];
+	uint8_t ts_buffer[TS_PACKET_SIZE];
 
 	// 255 means not set yet
 	uint8_t continuity_counter = 255;
@@ -630,10 +648,7 @@ int main(int argc, const char *argv[]) {
 	uint16_t pes_counter = 0;
 
 	// reading input
-	while (!feof(stdin) && (exit_request == 0)) {
-		size_t n = fread(&ts_buffer, 1, 188, stdin);
-		if (n == 0) continue;
-
+	while (exit_request == 0 && fread(&ts_buffer, 1, TS_PACKET_SIZE, stdin) == TS_PACKET_SIZE) {
 		// Transport Stream Header
 		uint8_t ts_sync = ts_buffer[0];
 		uint8_t ts_transport_error = (ts_buffer[1] & 0x80) >> 7;
@@ -680,6 +695,7 @@ int main(int argc, const char *argv[]) {
 		// uncorrectable error?
 		if (ts_transport_error > 0) {
 			VERBOSE fprintf(stderr, "WARNING: uncorrectable TS packet error (received CC %1x)\n", ts_continuity_counter);
+			pes_counter = 0;
 			continue;
 		}
 
@@ -700,28 +716,34 @@ int main(int argc, const char *argv[]) {
 				if (ts_continuity_counter != continuity_counter) {
 					VERBOSE fprintf(stderr, "WARNING: missing TS packet, flushing pes_buffer (expected CC %1x, received CC %1x, TS discontinuity %s, TS priority %s)\n",
 						continuity_counter, ts_continuity_counter, (af_discontinuity ? "YES" : "NO"), (ts_transport_priority ? "YES" : "NO"));
+
+					// process partial PES packet
+					if (pes_counter > 0) process_pes_packet(pes_buffer, pes_counter);
+
+					// reset
 					pes_counter = 0;
 					continuity_counter = 255;
 				}
 			}
 		}
 
-		// waiting for first payload_unit_start indicator
-		if ((ts_payload_unit_start == 0) && (pes_counter == 0)) continue;
+		if (ts_payload_unit_start) {
+			// proceed with pes buffer
+			if (pes_counter) process_pes_packet(pes_buffer, pes_counter);
 
-		// proceed with pes buffer
-		if ((ts_payload_unit_start > 0) && (pes_counter > 0)) process_pes_packet(pes_buffer, pes_counter);
-
-		// new pes frame start
-		if (ts_payload_unit_start > 0) pes_counter = 0;
+			// new pes frame start
+			pes_counter = 0;
+		} else {
+			// waiting for first payload_unit_start indicator
+			if (!pes_counter) continue;
+		}
 
 		// add pes data to buffer
 		if (pes_counter < (PES_BUFFER_SIZE - 184)) {
 			memcpy(&pes_buffer[pes_counter], &ts_buffer[4], 184);
 			pes_counter += 184;
 			packet_counter++;
-		}
-		else VERBOSE fprintf(stderr, "WARNING: pes packet size exceeds pes_buffer size, probably not teletext stream\n");
+		} else VERBOSE fprintf(stderr, "WARNING: pes packet size exceeds pes_buffer size, probably not teletext stream\n");
 	}
 
 	VERBOSE {
@@ -737,9 +759,14 @@ int main(int argc, const char *argv[]) {
 		fprintf(stderr, "\n");
 	}
 
+	// ouput any pending close caption
+	if (page_buffer.tainted > 0) {
+		page_buffer.hide_timestamp = last_timestamp;
+		process_page(&page_buffer);
+	}
+
 	if ((frames_produced == 0) && (config_nonempty > 0)) {
 		fprintf(stdout, "1\r\n00:00:00,000 --> 00:00:01,000\r\n(no closed captioning available)\r\n\r\n");
-		fflush(stdout);
 		frames_produced++;
 	}
 
